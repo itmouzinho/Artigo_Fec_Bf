@@ -1,0 +1,130 @@
+******************************************************************************************************************************
+********************************************************PREPARAÇÃO DE DADOS DA PNAD 2015**************************************
+*****************Impacto das transferencias do PBF sobre a taxa de fecundidade das beneficiarias******************
+******************************************************************************************************************************
+******************************************************************************************************************************
+
+*LEITURA DAS INFORMAÇÕES DO DESENHO AMOSTRAL NO ARQUIVO DE DOMICÍLIOS*
+
+cd "C:\Users\itmou\OneDrive\UFV\Pesquisas\Fecundidade e BF\Dados"
+
+clear
+set mem 700m, perm
+set more off
+
+#delimit;
+infix ano 1-4  uf 5-6 controle 7-12 serie 13-15 ncomodo 26-27 agua 56-56 banheiro 60-60 lixo 65-65 strat 178-184 psu 185-191
+using "C:\Users\itmou\OneDrive\UFV\Pesquisas\Fecundidade e BF\Dados\DOM2015.TXT", clear;
+#delimit cr
+
+#delimit;
+sort controle serie, stable;
+format controle %15.0g;
+format serie %15.0g;
+replace controle = float(controle);
+replace serie = float(serie);
+#delimit cr
+
+save domdissert, replace
+
+clear
+
+*LEITURA DOS DADOS DAS PESSOAS*
+
+#delimit;
+infix ano 1-4 uf 5-6 controle 7-12 serie 13-15 sexo 18-18 idade 27-29 condfam 31-31 num_fam 32-32 
+raca 33-33 casada 39-39 anosestudo 703-704 rendatransf 653-664 rendafampct 825-836 tamfam 787-788 
+pesopes 791-795 pesofam 796-800 rural 790-790 rendfamiliar 773-784 ano_nasc_vivo 686-689
+using "C:\Users\itmou\OneDrive\UFV\Pesquisas\Fecundidade e BF\Dados\PES2015.TXT";
+#delimit cr
+
+save basedados, replace
+
+*JUNÇÃO DAS INFORMAÇÕES DE DESENHO DA AMOSTRA AO ARQUIVO DE PESSOAS DA PNAD 2009*
+
+#delimit;
+sort controle serie, stable;
+joinby controle serie using domdissert;
+#delimit cr
+
+#delimit;
+recode sexo (2=1) (4=0);
+recode raca (2=1) (4=0) (6=0) (8=0) (9=0);
+recode rural (4=1) (5=1) (6=1) (7=1) (8=1) (1=0) (2=0) (3=0); 
+recode casada (3=0) (5=0);
+recode agua (1=1) (3=0);
+recode lixo (2=1) (3=0) (4=0) (5=0) (6=0);
+recode banheiro (3=0);
+replace rendatransf = 0 if rendatransf==.;
+drop if rendafampct==. | rendafampct==0;
+#delimit cr
+
+*Excluindo as rendas não declaradas
+mvdecode rendfamiliar, mv(999999999999)
+
+*Criação de famílias
+egen float fam = group(uf controle serie num_fam)
+
+**Crianças
+egen crianca = anymatch(idade), values(15 14 13 12 11 10 9 8 7 6 5 4 3 2 1 0)
+bysort fam: egen float filho = sum(crianca)
+replace filho = 1 if filho != 0
+
+**Adolescentes
+egen adolesc = anymatch(idade), values(17 16)
+bysort fam: egen float adol = sum(adolesc)
+replace adol = 1 if adol != 0
+
+*Idade do chefe da família
+
+gen idchef = idade if condfam==1
+
+*Anos de estudo do chefe da família
+
+gen estudchef = anosestudo if condfam==1
+
+**Alternativa de variavel dependente
+gen nasc_vivo = 0
+replace nasc_vivo=1 if ano_nasc_vivo==2014 | ano_nasc_vivo==2015
+
+**Excluindo variaveis
+drop if condfam==3 | condfam==4 | condfam==5 | condfam==6 | condfam==7 | condfam==8
+
+drop if idade<15 | idade>49
+
+drop if sexo==1
+
+******Criação da variável dependente Bolsa Família*******
+
+*Variável bolsa família para famílias com renda per capita menor ou igual a R$77,00
+drop if rendatransf>175
+gen transf=0
+replace transf=1 if rendatransf>0 & rendatransf<=175
+*replace transf=1 if rendatransf==77 | rendatransf==70 | rendatransf==80 | rendatransf==75 & filho==0 & adol==0 & rendafampct<=77
+*replace transf=1 if rendatransf==112|rendatransf==147 | rendatransf==150 | rendatransf==100 | rendatransf==110 & filho==1 & adol==0 & rendafampct<=77
+*replace transf=1 if rendatransf==122| rendatransf==120 | rendatransf==167 | rendatransf==170 | rendatransf==160 & filho==0 & adol==1 & rendafampct<=77
+*replace transf=1 if rendatransf==154 | rendatransf==155 | rendatransf==150 & filho==1 & adol==1 & rendafampct<=77
+
+*Variável bolsa família para famílias com renda per capita entre 77 e 154,00
+
+*replace transf=1 if rendatransf==35|rendatransf==70|rendatransf==105 | rendatransf==110 | rendatransf==140 | rendatransf==175 & filho==1 & adol==0 & rendafampct>77 & rendafampct<=154
+*replace transf=1 if rendatransf==77| rendatransf==80 | rendatransf==112|rendatransf==147|rendatransf==119| rendatransf==120 | rendatransf==150 | rendatransf==154 | rendatransf==200 | rendatransf==220 & filho==1 & adol==1 & rendafampct>77 & rendafampct<=154
+*replace transf=1 if rendatransf==42|rendatransf==84 | rendatransf==45 | rendatransf==85 & filho==0 & adol==1 & rendafampct>77 & rendafampct<=154
+
+save basedados99, replace
+
+drop if rendafampct>154
+
+*Dummies para as regiões do país
+
+gen nordeste=0
+replace nordeste = 1 if uf >=21 & uf <=29
+
+save basedados2, replace
+
+**********************PROPENSITY SCORE MATCHING**********************
+
+pscore transf raca nordeste filho estudchef lixo banheiro rural adol agua [weight=pesopes], pscore(escore2) blockid(myblock) comsup level (0.010)
+
+*****Calculo do ATT pelo metodo do vizinhos mais proximo*****
+attnd nasc_vivo transf raca nordeste filho estudchef lixo banheiro rural adol agua [weight=pesopes], pscore(escore2)
